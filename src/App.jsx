@@ -1,5 +1,6 @@
 import React from 'react';
 import { HospitalProvider, useHospital } from './context/HospitalContext';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { DisclaimerBanner } from './components/DisclaimerBanner';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
@@ -146,8 +147,10 @@ const MainContent = () => {
 
 export default function App() {
   return (
-    <HospitalProvider>
-      <MainContent />
-    </HospitalProvider>
+    <ErrorBoundary>
+      <HospitalProvider>
+        <MainContent />
+      </HospitalProvider>
+    </ErrorBoundary>
   );
 }

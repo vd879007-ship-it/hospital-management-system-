@@ -87,6 +87,29 @@ export const EMPTY_PATIENT = {
   qrPayload: ''
 };
 
+// Safe normalizer to prevent any undefined property access crashes
+export const normalizePatient = (raw) => {
+  if (!raw || typeof raw !== 'object') return { ...EMPTY_PATIENT };
+  return {
+    ...EMPTY_PATIENT,
+    ...raw,
+    vitals: {
+      ...EMPTY_PATIENT.vitals,
+      ...(raw.vitals || {})
+    },
+    emergencyContact: {
+      ...EMPTY_PATIENT.emergencyContact,
+      ...(raw.emergencyContact || {})
+    },
+    allergies: Array.isArray(raw.allergies) ? raw.allergies : [],
+    medicalHistory: Array.isArray(raw.medicalHistory) ? raw.medicalHistory : [],
+    prescriptions: Array.isArray(raw.prescriptions) ? raw.prescriptions : [],
+    labReports: Array.isArray(raw.labReports) ? raw.labReports : [],
+    surgeries: Array.isArray(raw.surgeries) ? raw.surgeries : [],
+    pastMedications: Array.isArray(raw.pastMedications) ? raw.pastMedications : []
+  };
+};
+
 // Automatic one-time cleanup of old seed data from previous browser sessions
 if (typeof window !== 'undefined' && localStorage.getItem('hsms_db_cleaned_v3') !== 'true') {
   localStorage.removeItem('hsms_patients');
@@ -204,8 +227,13 @@ export const HospitalProvider = ({ children }) => {
       fetchAllFromFirestore().then(res => {
         if (isMounted && res.success && res.data) {
           if (res.data.patients?.length > 0) {
-            setPatients(res.data.patients);
-            setSelectedPatientId(prev => prev || res.data.patients[0]?.id || '');
+            const valid = res.data.patients
+              .filter(p => p && p.id && (p.name || p.nameTa || p.patientId))
+              .map(normalizePatient);
+            setPatients(valid);
+            if (valid.length > 0) {
+              setSelectedPatientId(prev => (prev && valid.some(p => p.id === prev)) ? prev : valid[0]?.id || '');
+            }
           }
           if (res.data.appointments?.length > 0) setAppointments(res.data.appointments);
           if (res.data.prescriptions?.length > 0) setPrescriptions(res.data.prescriptions);
@@ -231,8 +259,15 @@ export const HospitalProvider = ({ children }) => {
       // Set up real-time listeners for instant multi-user synchronization
       const unsubPatients = subscribeToCollection('patients', (items) => {
         if (isMounted) {
-          setPatients(items);
-          if (items.length === 0) setSelectedPatientId('');
+          const valid = (items || [])
+            .filter(p => p && p.id && (p.name || p.nameTa || p.patientId))
+            .map(normalizePatient);
+          setPatients(valid);
+          if (valid.length === 0) {
+            setSelectedPatientId('');
+          } else {
+            setSelectedPatientId(prev => (prev && valid.some(p => p.id === prev)) ? prev : valid[0]?.id || '');
+          }
         }
       });
       const unsubAppointments = subscribeToCollection('appointments', (items) => {
@@ -1044,7 +1079,8 @@ export const HospitalProvider = ({ children }) => {
     }
   };
 
-  const selectedPatient = (patients.length > 0 && patients.find(p => p.id === selectedPatientId)) || patients[0] || EMPTY_PATIENT;
+  const rawPatient = (patients.length > 0 && patients.find(p => p.id === selectedPatientId)) || patients[0] || EMPTY_PATIENT;
+  const selectedPatient = normalizePatient(rawPatient);
   const activeEmergencyAlerts = emergencyAlerts.filter(a => a.status === 'Active');
 
   const translations = TRANSLATIONS[language] || TRANSLATIONS.en;

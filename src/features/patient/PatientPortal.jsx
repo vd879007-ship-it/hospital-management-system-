@@ -92,7 +92,7 @@ export const PatientPortal = () => {
 
   // Dynamic Predictive Wait Time
   const userTokenNum = patientToken 
-    ? parseInt(patientToken.tokenNumber.replace(/\D/g, ''), 10) || 101 
+    ? parseInt(String(patientToken.tokenNumber || '101').replace(/\D/g, ''), 10) || 101 
     : 101;
 
   const waitCalculation = calculateWaitTime({

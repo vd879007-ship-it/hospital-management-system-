@@ -1,0 +1,125 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // RBAC Security Helpers
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function hasRole(role) {
+      return isAuthenticated() && getUserData().role == role && getUserData().active == true;
+    }
+    
+    function isOwner(patientId) {
+      return isAuthenticated() && (request.auth.uid == patientId || getUserData().patientId == patientId);
+    }
+    
+    function isStaff() {
+      return hasRole('doctor') || hasRole('nurse') || hasRole('reception') || hasRole('receptionist') || hasRole('triage_staff') || hasRole('pharmacist') || hasRole('admin');
+    }
+
+    // 1. users: Authenticated can read own profile; Admin can read and write all users
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || hasRole('admin'));
+      allow create, update: if hasRole('admin');
+      allow delete: if false; // Soft-delete only
+    }
+
+    // 2. patients: Patients read own record; Staff can read; Reception and Admin can create/update
+    match /patients/{patientId} {
+      allow read: if isOwner(patientId) || isStaff();
+      allow create: if hasRole('reception') || hasRole('receptionist') || hasRole('admin');
+      allow update: if (isOwner(patientId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['patientId', 'bloodType'])) || hasRole('reception') || hasRole('receptionist') || hasRole('admin') || hasRole('doctor');
+      allow delete: if false;
+    }
+
+    // 3. tokens: Live OPD queue tokens
+    match /tokens/{tokenId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if hasRole('reception') || hasRole('receptionist') || hasRole('doctor') || hasRole('triage_staff') || hasRole('admin');
+      allow delete: if false;
+    }
+
+    // Compatibility match for appointments
+    match /appointments/{appointmentId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if hasRole('reception') || hasRole('receptionist') || hasRole('doctor') || hasRole('admin');
+      allow delete: if false;
+    }
+
+    // 4. consultations: Only doctors create consultations; patients read their own
+    match /consultations/{consultationId} {
+      allow read: if isOwner(resource.data.patientId) || hasRole('doctor') || hasRole('admin');
+      allow create: if hasRole('doctor');
+      allow update: if hasRole('doctor') && resource.data.status != 'Finalized';
+      allow delete: if false;
+    }
+
+    // 5. prescriptions: Only doctors write prescriptions; pharmacists can update status to Dispensed; patients read their own
+    match /prescriptions/{prescriptionId} {
+      allow read: if isOwner(resource.data.patientId) || hasRole('doctor') || hasRole('pharmacist') || hasRole('nurse');
+      allow create: if hasRole('doctor');
+      allow update: if hasRole('pharmacist') && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'dispensedBy', 'dispensedAt']);
+      allow delete: if false;
+    }
+
+    // 6. medications: Nurse eMAR administration tracking
+    match /medications/{taskId} {
+      allow read: if isStaff();
+      allow create: if hasRole('doctor') || hasRole('admin');
+      allow update: if hasRole('nurse') || hasRole('doctor');
+      allow delete: if false;
+    }
+
+    // Compatibility match for medicationTasks
+    match /medicationTasks/{taskId} {
+      allow read: if isStaff();
+      allow create: if hasRole('doctor') || hasRole('admin');
+      allow update: if hasRole('nurse') || hasRole('doctor');
+      allow delete: if false;
+    }
+
+    // 7. beds: 32 Ward and ICU beds
+    match /beds/{bedId} {
+      allow read: if isStaff() || isAuthenticated();
+      allow create, update: if hasRole('nurse') || hasRole('doctor') || hasRole('admin') || hasRole('reception') || hasRole('receptionist');
+      allow delete: if false;
+    }
+
+    // 8. inventory: Only pharmacists and admins write inventory
+    match /inventory/{medicineId} {
+      allow read: if isStaff();
+      allow create, update: if hasRole('pharmacist') || hasRole('admin');
+      allow delete: if false;
+    }
+
+    // Compatibility match for medicines
+    match /medicines/{medicineId} {
+      allow read: if isStaff();
+      allow create, update: if hasRole('pharmacist') || hasRole('admin');
+      allow delete: if false;
+    }
+
+    // 9. auditLogs: Strictly append-only, readable only by administrators
+    match /auditLogs/{logId} {
+      allow read: if hasRole('admin');
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // Immutable audit trail
+    }
+
+    // 10. alerts: Emergency triage Code Red alerts
+    match /alerts/{alertId} {
+      allow read: if isStaff();
+      allow create: if isAuthenticated();
+      allow update: if hasRole('doctor') || hasRole('triage_staff') || hasRole('nurse') || hasRole('admin');
+      allow delete: if false;
+    }
+  }
+}
